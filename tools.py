@@ -36,11 +36,7 @@ def _get_groq_client():
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
 
-def search_listings(
-    description: str,
-    size: str | None = None,
-    max_price: float | None = None,
-) -> list[dict]:
+
     """
     Search the mock listings dataset for items matching the description,
     optional size, and optional price ceiling.
@@ -69,13 +65,48 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+
+def search_listings(
+    description: str,
+    size: str | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    listings = load_listings()
+
+    # 1. Filter by max_price and size
+    filtered = []
+    for item in listings:
+        if max_price is not None and item["price"] > max_price:
+            continue
+        if size is not None and size.lower() not in item["size"].lower():
+            continue
+        filtered.append(item)
+
+    # 2. Score by keyword overlap with description
+    keywords = description.lower().split()
+
+    def score(item):
+        title_text = item["title"].lower()
+        desc_text = item["description"].lower()
+        tags_text = " ".join(item["style_tags"]).lower()
+
+        title_score = sum(2 for kw in keywords if kw in title_text)  # 가중치 2
+        desc_score = sum(1 for kw in keywords if kw in desc_text)
+        tags_score = sum(1 for kw in keywords if kw in tags_text)
+
+        return title_score + desc_score + tags_score
+
+    # 3. Drop score 0, sort by score descending
+    scored = [(item, score(item)) for item in filtered]
+    scored = [(item, s) for item, s in scored if s > 0]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    return [item for item, _ in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
@@ -100,13 +131,48 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
 
+def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+    client = _get_groq_client()
+
+    if not wardrobe["items"]:
+        prompt = f"""You are a fashion stylist specializing in thrifted and vintage clothing.
+A user just found this secondhand item:
+- Title: {new_item['title']}
+- Description: {new_item['description']}
+- Style tags: {', '.join(new_item['style_tags'])}
+- Colors: {', '.join(new_item['colors'])}
+- Category: {new_item['category']}
+
+They haven't shared their wardrobe yet. Give them general styling advice — what kinds of pieces pair well with this item, what aesthetic it suits, and how to wear it."""
+
+    else:
+        wardrobe_text = "\n".join(
+            f"- {item['name']} ({item['category']}, {', '.join(item['colors'])}, tags: {', '.join(item['style_tags'])})"
+            for item in wardrobe["items"]
+        )
+        prompt = f"""You are a fashion stylist specializing in thrifted and vintage clothing.
+A user just found this secondhand item:
+- Title: {new_item['title']}
+- Description: {new_item['description']}
+- Style tags: {', '.join(new_item['style_tags'])}
+- Colors: {', '.join(new_item['colors'])}
+- Category: {new_item['category']}
+
+Their current wardrobe includes:
+{wardrobe_text}
+
+Suggest 1-2 complete outfit combinations using the new item and specific pieces from their wardrobe. Be specific about which pieces to pair and how to style them."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+    )
+    return response.choices[0].message.content
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
 
-def create_fit_card(outfit: str, new_item: dict) -> str:
     """
     Generate a short, shareable outfit caption for the thrifted find.
 
@@ -133,5 +199,69 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+
+def create_fit_card(outfit: str, new_item: dict) -> str:
+    if not outfit or not outfit.strip():
+        return "Could not generate a fit card — outfit description is missing. Please try again."
+
+    client = _get_groq_client()
+
+    prompt = f"""You are writing an Instagram caption for a thrift find outfit post.
+
+The thrifted item:
+- Title: {new_item['title']}
+- Price: ${new_item['price']}
+- Colors: {', '.join(new_item['colors'])}
+- Style tags: {', '.join(new_item['style_tags'])}
+
+The outfit:
+{outfit}
+
+Write a 2-3 sentence caption that:
+- Sounds casual and authentic, like a real person posting their OOTD
+- Mentions the item and price naturally
+- Captures the outfit vibe in specific terms
+- Is NOT a product description
+- Uses occasional lowercase and 1-2 emojis
+
+Only output the caption, nothing else."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=150,
+        temperature=1.2,
+    )
+    return response.choices[0].message.content
+
+
+# ── Tool 4: compare_price ───────────────────────────────────────────────────
+
+def compare_price(item: dict, listings: list[dict]) -> str:
+    if len(listings) < 2:
+        return ""
+
+    comparable = [
+        l for l in listings
+        if l["id"] != item["id"] and l["category"] == item["category"]
+    ]
+
+    if not comparable:
+        comparable = [l for l in listings if l["id"] != item["id"]]
+
+    avg_price = sum(l["price"] for l in comparable) / len(comparable)
+    item_price = item["price"]
+    diff = avg_price - item_price
+
+    if diff > 5:
+        assessment = "a good deal"
+    elif diff < -5:
+        assessment = "on the pricier side"
+    else:
+        assessment = "fairly priced"
+
+    return (
+        f"This item is priced at ${item_price:.2f}, compared to an average of "
+        f"${avg_price:.2f} for similar items in the search results — "
+        f"this is {assessment}."
+    )

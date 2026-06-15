@@ -39,6 +39,7 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "search_results": [],        # list of matching listing dicts
         "selected_item": None,       # top result, passed into suggest_outfit
         "wardrobe": wardrobe,        # user's wardrobe dict
+        "price_comparison": None,
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "error": None,               # set if the interaction ended early
@@ -47,7 +48,6 @@ def _new_session(query: str, wardrobe: dict) -> dict:
 
 # ── planning loop ─────────────────────────────────────────────────────────────
 
-def run_agent(query: str, wardrobe: dict) -> dict:
     """
     Main agent entry point. Runs the FitFindr planning loop for a single
     user interaction and returns the completed session dict.
@@ -93,10 +93,51 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     of planning.md — your implementation should match what you described there.
     """
     # TODO: implement the planning loop
-    session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
-    return session
 
+
+def run_agent(query: str, wardrobe: dict) -> dict:
+    from tools import compare_price
+    import re
+
+    session = _new_session(query, wardrobe)
+
+    price_match = re.search(r"\$?(\d+(?:\.\d+)?)", query)
+    max_price = float(price_match.group(1)) if price_match else None
+
+    size_match = re.search(r"\bsize\s+([A-Z]{1,3})\b", query, re.IGNORECASE)
+    size = size_match.group(1).upper() if size_match else None
+
+    description = re.sub(r"\$?\d+(?:\.\d+)?", "", query)
+    description = re.sub(r"\bsize\s+[A-Z]{1,3}\b", "", description, flags=re.IGNORECASE)
+    description = re.sub(r"\b(under|for|looking|a|for|im|i'm)\b", "", description, flags=re.IGNORECASE)
+    description = description.strip()
+
+    session["parsed"] = {
+        "description": description,
+        "size": size,
+        "max_price": max_price,
+    }
+
+    results = search_listings(description, size=size, max_price=max_price)
+    session["search_results"] = results
+
+    if not results:
+        session["error"] = (
+            "No listings matched your search. Try raising your max price, "
+            "removing the size filter, or using a different description."
+        )
+        return session
+    
+    session["selected_item"] = results[0]
+
+    if len(results) >= 2:
+        session["price_comparison"] = compare_price(results[0], results)
+
+    session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+
+    session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+
+    return session
 
 # ── CLI test ──────────────────────────────────────────────────────────────────
 

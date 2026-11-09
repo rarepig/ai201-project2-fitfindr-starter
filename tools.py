@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -20,6 +21,9 @@ from groq import Groq
 from utils.data_loader import load_listings
 
 load_dotenv()
+
+# Groq retired llama-3.3-70b-versatile on 2026-08-16; gpt-oss-120b is the recommended replacement.
+MODEL = "openai/gpt-oss-120b"
 
 
 # ── Groq client ───────────────────────────────────────────────────────────────
@@ -66,6 +70,12 @@ def _get_groq_client():
     Before writing code, fill in the Tool 1 section of planning.md.
     """
 
+def _size_matches(wanted: str, item_size: str) -> bool:
+    """Match a size as a whole token: "M" matches "S/M" and "M/L"; "8" matches "US 8" but not "W28"."""
+    tokens = re.findall(r"[a-z0-9.]+", item_size.lower())
+    return wanted.lower() in tokens
+
+
 def search_listings(
     description: str,
     size: str | None = None,
@@ -78,7 +88,7 @@ def search_listings(
     for item in listings:
         if max_price is not None and item["price"] > max_price:
             continue
-        if size is not None and size.lower() not in item["size"].lower():
+        if size is not None and not _size_matches(size, item["size"]):
             continue
         filtered.append(item)
 
@@ -165,9 +175,9 @@ Their current wardrobe includes:
 Suggest 1-2 complete outfit combinations using the new item and specific pieces from their wardrobe. Be specific about which pieces to pair and how to style them."""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=300,
+        max_tokens=1500,
     )
     return response.choices[0].message.content
 
@@ -227,9 +237,9 @@ Write a 2-3 sentence caption that:
 Only output the caption, nothing else."""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=150,
+        max_tokens=800,
         temperature=1.2,
     )
     return response.choices[0].message.content

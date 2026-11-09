@@ -101,16 +101,25 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     session = _new_session(query, wardrobe)
 
-    price_match = re.search(r"\$?(\d+(?:\.\d+)?)", query)
+    # Price: only a number after "under/below/less than/max" or one with a "$" sign,
+    # so "90s" or "size 8" are not mistaken for a price.
+    price_pat = r"(?:\b(?:under|below|less than|max|up to)\s*\$?|\$)(\d+(?:\.\d+)?)"
+    price_match = re.search(price_pat, query, re.IGNORECASE)
     max_price = float(price_match.group(1)) if price_match else None
 
-    size_match = re.search(r"\bsize\s+([A-Z]{1,3})\b", query, re.IGNORECASE)
+    # Size: letter sizes (S, M, XL) or numeric shoe/waist sizes (8, 8.5).
+    size_pat = r"\bsize\s+([A-Za-z]{1,4}|\d+(?:\.\d+)?)\b"
+    size_match = re.search(size_pat, query, re.IGNORECASE)
     size = size_match.group(1).upper() if size_match else None
 
-    description = re.sub(r"\$?\d+(?:\.\d+)?", "", query)
-    description = re.sub(r"\bsize\s+[A-Z]{1,3}\b", "", description, flags=re.IGNORECASE)
-    description = re.sub(r"\b(under|for|looking|a|for|im|i'm)\b", "", description, flags=re.IGNORECASE)
-    description = description.strip()
+    description = re.sub(price_pat, " ", query, flags=re.IGNORECASE)
+    description = re.sub(size_pat, " ", description, flags=re.IGNORECASE)
+    description = re.sub(
+        r"\b(i'm|im|i am|looking|for|a|an|the|in|under|below|some|want|need)\b",
+        " ", description, flags=re.IGNORECASE,
+    )
+    description = re.sub(r"[^\w\s'-]", " ", description)
+    description = " ".join(description.split())
 
     session["parsed"] = {
         "description": description,
